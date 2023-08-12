@@ -30,7 +30,7 @@ for i in sortedbd:
 tr += "}"
 print(tr)
 
-with open((os.path.dirname(os.path.realpath(__file__))+"/") + "rwkv_orig_vocab.json", "r", encoding="utf-8") as f:
+with open(f"{os.path.dirname(os.path.realpath(__file__))}/rwkv_orig_vocab.json", "r", encoding="utf-8") as f:
     encoder = json.load(f)
     s = ""
     with open("rwkv_vocab.embd", "w", encoding="utf-8") as f2:

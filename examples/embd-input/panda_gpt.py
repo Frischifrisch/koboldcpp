@@ -58,8 +58,8 @@ class PandaGPT:
     def extract_multimoal_feature(self, inputs):
         features = []
         for key in ["image", "audio", "video", "thermal"]:
-            if key + "_paths" in inputs:
-                embeds = self.encode_data(key, inputs[key+"_paths"])
+            if f"{key}_paths" in inputs:
+                embeds = self.encode_data(key, inputs[f"{key}_paths"])
                 features.append(embeds)
         return features
 

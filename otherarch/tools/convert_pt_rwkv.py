@@ -45,7 +45,7 @@ def write_state_dict(state_dict: Dict[str, torch.Tensor], dest_path: str, data_t
             1 if data_type == 'float16' else 0
         ))
 
-        for k in state_dict.keys():
+        for k in state_dict:
             tensor = state_dict[k].float()
 
             # Same processing as in "RWKV_in_150_lines.py"

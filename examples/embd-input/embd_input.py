@@ -35,8 +35,7 @@ class MyModel:
         libc.eval_id(self.model, x)
 
     def sampling(self):
-        s = libc.sampling(self.model)
-        return s
+        return libc.sampling(self.model)
 
     def stream_generate(self, end="</s>"):
         ret = b""

@@ -32,8 +32,9 @@ Quant types:
 - F16: extremely large, virtually no quality loss - not recommended
 - F32: absolutely huge, lossless - not recommended
 """
+
 import subprocess
-subprocess.run(f"pip install huggingface-hub==0.16.4", shell=True, check=True)
+subprocess.run("pip install huggingface-hub==0.16.4", shell=True, check=True)
 
 import argparse
 import os
@@ -60,7 +61,7 @@ def main(model, outname, outdir, quants, keep_fp16):
     os.makedirs(outdir, exist_ok=True)
 
     print("Building llama.cpp")
-    subprocess.run(f"cd .. && make quantize", shell=True, check=True)
+    subprocess.run("cd .. && make quantize", shell=True, check=True)
 
     fp16 = f"{outdir}/{outname}.ggml{ggml_version}.fp16.bin"
 

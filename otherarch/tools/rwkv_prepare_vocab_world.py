@@ -41,11 +41,9 @@ def get_code_points(string):
 import unicodedata
 
 def remove_nonprintable_characters(input_string):
-    cleaned_string = ''.join(
-        c for c in input_string
-        if unicodedata.category(c)[0] != 'C'
+    return ''.join(
+        c for c in input_string if unicodedata.category(c)[0] != 'C'
     )
-    return cleaned_string
 
 byte_encoder = bytes_to_unicode()
 byte_decoder = {v:k for k, v in byte_encoder.items()}
@@ -56,7 +54,7 @@ for i in sortedbd:
 tr += "}"
 print(tr)
 
-with open((os.path.dirname(os.path.realpath(__file__))+"/") + "rwkv_world_vocab.txt", "r", encoding="utf-8") as f:
+with open(f"{os.path.dirname(os.path.realpath(__file__))}/rwkv_world_vocab.txt", "r", encoding="utf-8") as f:
     list = f.readlines()
     s = ""
     with open("rwkv_world_vocab.embd", "w", encoding="utf-8") as f2:
