@@ -27,7 +27,7 @@ def calculatecorrect():
     for listing in os.listdir(directory):
         filename = os.fsdecode(listing)
         if filename.endswith(".txt"):
-            file = open("./examples/jeopardy/results/" + filename, "rt")
+            file = open(f"./examples/jeopardy/results/{filename}", "rt")
             global labels
             global numEntries
             global numbers
@@ -35,11 +35,11 @@ def calculatecorrect():
             numEntries += 1
             i = 1
             totalcorrect = 0
-            for line in file.readlines():
+            for line in file:
                 if line.strip() != "------":
                     print(line)
                 else:
-                    print("Correct answer: " + rows[i][2] + "\n")
+                    print(f"Correct answer: {rows[i][2]}" + "\n")
                     i += 1
                     print("Did the AI get the question right? (y/n)")
                     if input() == "y":

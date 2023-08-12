@@ -98,7 +98,7 @@ class GGMLFileType(enum.Enum):
         elif self == GGMLFileType.MostlyQ4_1:
             return DT_Q4_1
         elif self == GGMLFileType.PerLayerIsQ4_1:
-            if name in ('output.weight', 'tok_embeddings.weight'):
+            if name in {'output.weight', 'tok_embeddings.weight'}:
                 return DT_F16
             else:
                 return DT_Q4_1
@@ -295,8 +295,8 @@ class SentencePieceVocab:
               yield text, score
 
     def added_tokens(self) -> Iterable[Tuple[bytes, float]]:
+        score = -1000.0
         for text in self.added_tokens_list:
-            score = -1000.0
             yield text.encode("utf-8"), score
 
     def all_tokens(self) -> Iterable[Tuple[bytes, float]]:
@@ -541,10 +541,7 @@ class GPTQForLLaMaQuantizedTensor(Tensor):
     def inspect(self, row: int, col: int) -> None:
         '''For debugging.'''
         qweight = (self.qweight[row, col // 8] >> (4 * (col & 7))) & 0xf
-        if self.g_idx is not None:
-            group = self.g_idx[col]
-        else:
-            group = int(col // self.groupsize())
+        group = int(col // self.groupsize()) if self.g_idx is None else self.g_idx[col]
         scale = self.scales[row, group]
         addend = self.addends[row, group]
         with np.printoptions(precision=None, suppress=True):
@@ -691,7 +688,7 @@ def merge_sharded(models: List[LazyModel]) -> LazyModel:
 
 
 def merge_multifile_models(models_plus: List[ModelPlus]) -> ModelPlus:
-    formats = set(mp.format for mp in models_plus)
+    formats = {mp.format for mp in models_plus}
     assert len(formats) == 1, "different formats?"
     format = formats.pop()
     paths = [path for mp in models_plus for path in mp.paths]
@@ -716,28 +713,43 @@ def merge_multifile_models(models_plus: List[ModelPlus]) -> ModelPlus:
 def permute_lazy(lazy_tensor: LazyTensor, n_head: int, n_kv_head: Optional[int] = None) -> LazyTensor:
     def load() -> Tensor:
         return lazy_tensor.load().permute(n_head, n_kv_head)
-    return LazyTensor(load, lazy_tensor.shape, lazy_tensor.data_type, f'permute({n_head}, {n_kv_head}) ' + lazy_tensor.description)
+
+    return LazyTensor(
+        load,
+        lazy_tensor.shape,
+        lazy_tensor.data_type,
+        f'permute({n_head}, {n_kv_head}) {lazy_tensor.description}',
+    )
 
 def permute_part_lazy(lazy_tensor: LazyTensor, n_part: int, n_head: int) -> LazyTensor:
     def load() -> Tensor:
         return lazy_tensor.load().permute_part(n_part, n_head)
+
     s = lazy_tensor.shape.copy()
     s[0] = s[0] // 3
-    return LazyTensor(load, s, lazy_tensor.data_type, f'permute({n_head}) ' + lazy_tensor.description)
+    return LazyTensor(
+        load,
+        s,
+        lazy_tensor.data_type,
+        f'permute({n_head}) {lazy_tensor.description}',
+    )
 
 def part_lazy(lazy_tensor: LazyTensor, n_part: int) -> LazyTensor:
     def load() -> Tensor:
         return lazy_tensor.load().part(n_part)
+
     s = lazy_tensor.shape.copy()
     s[0] = s[0] // 3
-    return LazyTensor(load, s, lazy_tensor.data_type, 'part ' + lazy_tensor.description)
+    return LazyTensor(
+        load, s, lazy_tensor.data_type, f'part {lazy_tensor.description}'
+    )
 
 def convert_transformers_to_orig(model: LazyModel, params: Params) -> LazyModel:
-    out: LazyModel = {}
-    out["tok_embeddings.weight"] = model["model.embed_tokens.weight"]
-    out["norm.weight"] = model["model.norm.weight"]
-    out["output.weight"] = model["lm_head.weight"]
-
+    out: LazyModel = {
+        "tok_embeddings.weight": model["model.embed_tokens.weight"],
+        "norm.weight": model["model.norm.weight"],
+        "output.weight": model["lm_head.weight"],
+    }
     for i in itertools.count():
         if f"model.layers.{i}.self_attn.q_proj.weight" in model:
             out[f"layers.{i}.attention.wq.weight"] = permute_lazy(model[f"model.layers.{i}.self_attn.q_proj.weight"], params.n_head)
@@ -767,30 +779,30 @@ def handle_quantization(model: LazyModel) -> LazyModel:
     for 'foo.weight' (which resolve to QuantizedTensors).
     '''
     def convert(name: str) -> Tuple[str, LazyTensor]:
-        if name.endswith(".qweight"):
-            namebase = name.rsplit('.', 1)[0]
-            orig_name = namebase + ".weight"
-
-            lazy_tensor = model[name]
-            assert len(lazy_tensor.shape) == 2
-            real_shape = [lazy_tensor.shape[1], lazy_tensor.shape[0] * 8]
-
-            # Calculate type.  This replicates the logic in
-            # GPTQForLLaMaQuantizedTensor (which is executed when the modelis
-            # actually loaded).
-            lazy_scales = model[f"{namebase}.scales"]
-            scales_width = 1 if lazy_scales.shape[1] == 1 else lazy_scales.shape[0]
-            assert real_shape[1] % scales_width == 0
-            groupsize = real_shape[1] // scales_width
-            have_g_idx = f"{namebase}.g_idx" in model
-            data_type = QuantizedDataType(groupsize=groupsize, have_addends=True, have_g_idx=have_g_idx)
-
-            def load() -> Tensor:
-                return GPTQForLLaMaQuantizedTensor(model, namebase)
-
-            return (orig_name, LazyTensor(load, real_shape, data_type, '[quantized]'))
-        else:
+        if not name.endswith(".qweight"):
             return (name, model[name])
+        namebase = name.rsplit('.', 1)[0]
+        orig_name = f"{namebase}.weight"
+
+        lazy_tensor = model[name]
+        assert len(lazy_tensor.shape) == 2
+        real_shape = [lazy_tensor.shape[1], lazy_tensor.shape[0] * 8]
+
+        # Calculate type.  This replicates the logic in
+        # GPTQForLLaMaQuantizedTensor (which is executed when the modelis
+        # actually loaded).
+        lazy_scales = model[f"{namebase}.scales"]
+        scales_width = 1 if lazy_scales.shape[1] == 1 else lazy_scales.shape[0]
+        assert real_shape[1] % scales_width == 0
+        groupsize = real_shape[1] // scales_width
+        have_g_idx = f"{namebase}.g_idx" in model
+        data_type = QuantizedDataType(groupsize=groupsize, have_addends=True, have_g_idx=have_g_idx)
+
+        def load() -> Tensor:
+            return GPTQForLLaMaQuantizedTensor(model, namebase)
+
+        return (orig_name, LazyTensor(load, real_shape, data_type, '[quantized]'))
+
     return dict(convert(name) for name in model)
 
 # Functionality that simulates `torch.load` but where individual tensors are
@@ -824,7 +836,7 @@ class LazyUnpickler(pickle.Unpickler):
         assert isinstance(pid[1], LazyStorageKind)
         data_type = pid[1].data_type
         filename_stem = pid[2]
-        filename = self.data_base_path + '/' + filename_stem
+        filename = f'{self.data_base_path}/{filename_stem}'
         info = self.zip_file.getinfo(filename)
 
         def load(offset: int, elm_count: int) -> NDArray:
@@ -837,6 +849,7 @@ class LazyUnpickler(pickle.Unpickler):
             data = fp.read(size)
             assert len(data) == size
             return np.frombuffer(data, dtype)
+
         description = f'storage data_type={data_type} path-in-zip={filename} path={self.zip_file.filename}'
         return LazyStorage(load=load, kind=pid[1], description=description)
 
@@ -853,8 +866,8 @@ class LazyUnpickler(pickle.Unpickler):
         return LazyTensor(load, list(size), storage.kind.data_type, description)
 
     # @staticmethod
-    def rebuild_from_type_v2(func, new_type, args, state):
-        return func(*args)
+    def rebuild_from_type_v2(self, new_type, args, state):
+        return self(*args)
 
     CLASSES: Dict[Any, Any] = {
         ('torch._tensor', '_rebuild_from_type_v2'): rebuild_from_type_v2,
@@ -1030,10 +1043,11 @@ def bounded_parallel_map(func: Callable[[In], Out], iterable: Iterable[In], conc
     letting results pile up in memory.  Specifically, there is a max of one
     output value buffered per thread.'''
     with concurrent.futures.ThreadPoolExecutor() as executor:
-        futures: List[concurrent.futures.Future[Out]] = []
         items_rev = list(iterable)[::-1]
-        for i in range(min(concurrency, len(items_rev))):
-            futures.append(executor.submit(func, items_rev.pop()))
+        futures: List[concurrent.futures.Future[Out]] = [
+            executor.submit(func, items_rev.pop())
+            for _ in range(min(concurrency, len(items_rev)))
+        ]
         while futures:
             result = futures.pop(0).result()
             if items_rev:
@@ -1042,21 +1056,22 @@ def bounded_parallel_map(func: Callable[[In], Out], iterable: Iterable[In], conc
 
 
 def check_vocab_size(params: Params, vocab: Vocab) -> None:
-    if params.n_vocab != vocab.vocab_size:
-        # GGMLVocab comes from the same file as the model so shouldn't mismatch:
-        assert isinstance(vocab, SentencePieceVocab)
-        if params.n_vocab == vocab.vocab_size_base:
-            print("Ignoring added_tokens.json since model matches vocab size without it.")
-            vocab.added_tokens_list = []
-            vocab.vocab_size = vocab.vocab_size_base
-            return
-        msg = f"Vocab size mismatch (model has {params.n_vocab}, but {vocab.fname_tokenizer}"
-        if vocab.fname_added_tokens is not None:
-            msg += f" combined with {vocab.fname_added_tokens}"
-        msg += f" has {vocab.vocab_size})."
-        if vocab.vocab_size < params.n_vocab < vocab.vocab_size + 20 and vocab.fname_added_tokens is None:
-            msg += f"  Most likely you are missing added_tokens.json (should be in {vocab.fname_tokenizer.parent})."
-        raise Exception(msg)
+    if params.n_vocab == vocab.vocab_size:
+        return
+    # GGMLVocab comes from the same file as the model so shouldn't mismatch:
+    assert isinstance(vocab, SentencePieceVocab)
+    if params.n_vocab == vocab.vocab_size_base:
+        print("Ignoring added_tokens.json since model matches vocab size without it.")
+        vocab.added_tokens_list = []
+        vocab.vocab_size = vocab.vocab_size_base
+        return
+    msg = f"Vocab size mismatch (model has {params.n_vocab}, but {vocab.fname_tokenizer}"
+    if vocab.fname_added_tokens is not None:
+        msg += f" combined with {vocab.fname_added_tokens}"
+    msg += f" has {vocab.vocab_size})."
+    if vocab.vocab_size < params.n_vocab < vocab.vocab_size + 20 and vocab.fname_added_tokens is None:
+        msg += f"  Most likely you are missing added_tokens.json (should be in {vocab.fname_tokenizer.parent})."
+    raise Exception(msg)
 
 
 class OutputFile:
@@ -1185,12 +1200,7 @@ def find_multifile_paths(path: Path) -> List[Path]:
         if nth_path is None:
             break
         ret.append(nth_path)
-    if not ret:
-        # No matches.  This should only happen if the file was named, e.g.,
-        # foo.0, and there was no file named foo.  Oh well, try to process it
-        # as a single file.
-        return [path]
-    return ret
+    return [path] if not ret else ret
 
 
 def load_some_model(path: Path) -> ModelPlus:
@@ -1220,8 +1230,7 @@ def load_some_model(path: Path) -> ModelPlus:
         print(f"Loading model file {path}")
         models_plus.append(lazy_load_file(path))
 
-    model_plus = merge_multifile_models(models_plus)
-    return model_plus
+    return merge_multifile_models(models_plus)
 
 
 def filter_and_sort_tensors(model: LazyModel) -> LazyModel:
@@ -1234,9 +1243,7 @@ def load_vocab(path: Path, vocabtype: Optional[str]) -> SentencePieceVocab:
     # a directory, it might be the model directory, and tokenizer.model might
     # be in the parent of that.
     if path.is_dir():
-        vocab_file = "tokenizer.model"
-        if vocabtype == 'bpe':
-          vocab_file = "vocab.json"
+        vocab_file = "vocab.json" if vocabtype == 'bpe' else "tokenizer.model"
         path2 = path / vocab_file
         # Use `.parent` instead of /.. to handle the symlink case better.
         path3 = path.parent / vocab_file

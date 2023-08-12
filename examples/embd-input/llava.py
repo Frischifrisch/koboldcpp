@@ -44,7 +44,7 @@ class Llava:
         self.model.eval_string("user: ")
         self.model.eval_token(32003-2) # im_start
         self.model.eval_float(embd_image.T)
-        for i in range(image_token_len-embd_image.shape[0]):
+        for _ in range(image_token_len-embd_image.shape[0]):
             self.model.eval_token(32003-3) # im_patch
         self.model.eval_token(32003-1) # im_end
         self.model.eval_string(question)

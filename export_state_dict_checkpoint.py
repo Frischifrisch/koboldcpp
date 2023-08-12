@@ -116,11 +116,7 @@ new_state_dict = {}
 for k, v in lora_model_sd.items():
     new_k = translate_state_dict_key(k)
     if new_k is not None:
-        if "wq" in new_k or "wk" in new_k:
-            new_state_dict[new_k] = unpermute(v)
-        else:
-            new_state_dict[new_k] = v
-
+        new_state_dict[new_k] = unpermute(v) if "wq" in new_k or "wk" in new_k else v
 os.makedirs("./ckpt", exist_ok=True)
 
 torch.save(new_state_dict, "./ckpt/consolidated.00.pth")

@@ -79,13 +79,8 @@ def pick_existant_file(ntoption,nonntoption):
     ntexist = file_exists(ntoption)
     nonntexist = file_exists(nonntoption)
     if os.name == 'nt':
-        if nonntexist and not ntexist:
-            return nonntoption
-        return ntoption
-    else:
-        if ntexist and not nonntexist:
-            return ntoption
-        return nonntoption
+        return nonntoption if nonntexist and not ntexist else ntoption
+    return ntoption if ntexist and not nonntexist else nonntoption
 
 lib_default = pick_existant_file("koboldcpp.dll","koboldcpp.so")
 lib_failsafe = pick_existant_file("koboldcpp_failsafe.dll","koboldcpp_failsafe.so")
@@ -121,38 +116,33 @@ def init_library():
             print("Attempting to use CLBlast library for faster prompt ingestion. A compatible clblast will be required.")
             use_clblast = True
     elif (args.usecublas is not None):
-        if not file_exists(lib_cublas):
-            print("Warning: CuBLAS library file not found. Non-BLAS library will be used.")
-        else:
+        if file_exists(lib_cublas):
             print("Attempting to use CuBLAS library for faster prompt ingestion. A compatible CuBLAS will be required.")
             use_cublas = True
-    else:
-        if not file_exists(lib_openblas) or (os.name=='nt' and not file_exists("libopenblas.dll")):
-            print("Warning: OpenBLAS library file not found. Non-BLAS library will be used.")
-        elif args.noblas:
-            print("Attempting to library without OpenBLAS.")
         else:
-            use_openblas = True
-            print("Attempting to use OpenBLAS library for faster prompt ingestion. A compatible libopenblas will be required.")
-            if sys.platform=="darwin":
-                print("Mac OSX note: Some people have found Accelerate actually faster than OpenBLAS. To compare, run Koboldcpp with --noblas instead.")
+            print("Warning: CuBLAS library file not found. Non-BLAS library will be used.")
+    elif not file_exists(lib_openblas) or (os.name=='nt' and not file_exists("libopenblas.dll")):
+        print("Warning: OpenBLAS library file not found. Non-BLAS library will be used.")
+    elif args.noblas:
+        print("Attempting to library without OpenBLAS.")
+    else:
+        use_openblas = True
+        print("Attempting to use OpenBLAS library for faster prompt ingestion. A compatible libopenblas will be required.")
+        if sys.platform=="darwin":
+            print("Mac OSX note: Some people have found Accelerate actually faster than OpenBLAS. To compare, run Koboldcpp with --noblas instead.")
 
     if use_noavx2:
-        if use_failsafe:
-            libname = lib_failsafe
-        else:
-            libname = lib_noavx2
+        libname = lib_failsafe if use_failsafe else lib_noavx2
+    elif use_clblast:
+        libname = lib_clblast
+    elif use_cublas:
+        libname = lib_cublas
+    elif use_openblas:
+        libname = lib_openblas
     else:
-        if use_clblast:
-            libname = lib_clblast
-        elif use_cublas:
-            libname = lib_cublas
-        elif use_openblas:
-            libname = lib_openblas
-        else:
-            libname = lib_default
+        libname = lib_default
 
-    print("Initializing dynamic library: " + libname)
+    print(f"Initializing dynamic library: {libname}")
     dir_path = getdirpath()
 
     #OpenBLAS should provide about a 2x speedup on prompt ingestion if compatible.
@@ -179,8 +169,8 @@ def load_model(model_filename):
     inputs.batch_size = 8
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
     inputs.threads = args.threads
-    inputs.low_vram = (True if (args.usecublas and "lowvram" in args.usecublas) else False)
-    inputs.use_mmq = (True if (args.usecublas and "mmq" in args.usecublas) else False)
+    inputs.low_vram = bool((args.usecublas and "lowvram" in args.usecublas))
+    inputs.use_mmq = bool((args.usecublas and "mmq" in args.usecublas))
     inputs.blasthreads = args.blasthreads
     inputs.f16_kv = True
     inputs.use_mmap = (not args.nommap)
@@ -207,12 +197,13 @@ def load_model(model_filename):
         clblastids = 100 + int(args.useclblast[0])*10 + int(args.useclblast[1])
     inputs.clblast_info = clblastids
     inputs.cublas_info = 0
-    if (args.usecublas and "0" in args.usecublas):
-        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    elif (args.usecublas and "1" in args.usecublas):
-        os.environ["CUDA_VISIBLE_DEVICES"] = "1"
-    elif (args.usecublas and "2" in args.usecublas):
-        os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+    if args.usecublas:
+        if "0" in args.usecublas:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "0"
+        elif "1" in args.usecublas:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+        elif "2" in args.usecublas:
+            os.environ["CUDA_VISIBLE_DEVICES"] = "2"
 
     for n in range(tensor_split_max):
         if args.tensor_split and n < len(args.tensor_split):
@@ -220,7 +211,7 @@ def load_model(model_filename):
         else:
             inputs.tensor_split[n] = 0
 
-    inputs.executable_path = (getdirpath()+"/").encode("UTF-8")
+    inputs.executable_path = f"{getdirpath()}/".encode("UTF-8")
     inputs.debugmode = args.debugmode
     banned_tokens = args.bantokens
     for n in range(ban_token_max):
@@ -228,8 +219,7 @@ def load_model(model_filename):
             inputs.banned_tokens[n] = "".encode("UTF-8")
         else:
             inputs.banned_tokens[n] = banned_tokens[n].encode("UTF-8")
-    ret = handle.load_model(inputs)
-    return ret
+    return handle.load_model(inputs)
 
 def generate(prompt,max_length=20, max_context_length=512, temperature=0.8, top_k=120, top_a=0.0, top_p=0.85, typical_p=1.0, tfs=1.0, rep_pen=1.1, rep_pen_range=128, mirostat=0, mirostat_tau=5.0, mirostat_eta=0.1, sampler_order=[6,0,1,3,4,2,5], seed=-1, stop_sequence=[], stream_sse=False):
     global maxctx
@@ -273,7 +263,7 @@ def generate(prompt,max_length=20, max_context_length=512, temperature=0.8, top_
                 print("\n(Note: Sub-optimal sampler_order detected. You may have reduced quality. Recommended sampler values are [6,0,1,3,4,2,5]. This message will only show once per session.)")
                 showsamplerwarning = False
         except TypeError as e:
-            print("ERROR: sampler_order must be a list of integers: " + str(e))
+            print(f"ERROR: sampler_order must be a list of integers: {str(e)}")
     inputs.seed = seed
     for n in range(stop_token_max):
         if not stop_sequence or n >= len(stop_sequence):
@@ -281,9 +271,7 @@ def generate(prompt,max_length=20, max_context_length=512, temperature=0.8, top_
         else:
             inputs.stop_sequence[n] = stop_sequence[n].encode("UTF-8")
     ret = handle.generate(inputs,outputs)
-    if(ret.status==1):
-        return ret.text.decode("UTF-8","ignore")
-    return ""
+    return ret.text.decode("UTF-8","ignore") if (ret.status==1) else ""
 
 def utfprint(str):
     try:
@@ -325,7 +313,6 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
         global showdebug
         if showdebug:
             super().log_message(format, *args)
-        pass
 
     async def generate_text(self, newprompt, genparams, basic_api_flag, stream_flag):
 
@@ -440,8 +427,7 @@ class ServerRequestHandler(http.server.SimpleHTTPRequestHandler):
 
         try:
             await asyncio.gather(*tasks)
-            generate_result = generate_task.result()
-            return generate_result
+            return generate_task.result()
         except Exception as e:
             print(e)
 
